@@ -8,10 +8,12 @@ import random
 from typing import Callable
 
 Card = tuple[int, int]  # rank 2..14, suit 0..3
-Policy = Callable[[tuple[float, ...], tuple[str, ...]], str]
+Action = str | tuple[str, int]
+Policy = Callable[[tuple[float, ...], tuple[str, ...]], Action]
 EventSink = Callable[[dict], None]
 STREETS = (0, 3, 1, 1)  # community cards dealt before each betting round
 BET_SIZE = (2, 2, 4, 4)
+MAX_BET = 100
 FEATURE_NAMES = (
     "high_hole_rank", "low_hole_rank", "pocket_pair", "suited",
     "street", "made_hand_category", "board_has_pair", "board_max_suit_count",
@@ -96,7 +98,11 @@ def baseline_policy(style: str, rng: random.Random) -> Policy:
 def play_hand(policy: Policy, seed: int, style: str = "tight",
               on_event: EventSink | None = None,
               opponent_policy: Policy | None = None) -> int:
-    """Return agent net chips for one hand; each player antes one chip."""
+    """Return agent net chips; policies may return ('raise', chips) for a sized bet.
+
+    String actions retain fixed-limit sizes. Sized bets range from the street
+    minimum to MAX_BET; there is still only one bet per street and no stacks.
+    """
     rng = random.Random(seed)
     deck = [(rank, suit) for suit in range(4) for rank in range(2, 15)]
     rng.shuffle(deck)
@@ -129,7 +135,18 @@ def play_hand(policy: Policy, seed: int, style: str = "tight",
                 legal += ("raise",)
             features = observation(holes[actor], board, street, to_call, pot,
                                    raises == 0, actor == first_actor)
-            action = policy(features, legal) if actor == 0 else opponent(features, legal)
+            emit("turn", actor=actor, legal=legal, to_call=to_call,
+                 min_bet=BET_SIZE[street], max_bet=MAX_BET)
+            choice = policy(features, legal) if actor == 0 else opponent(features, legal)
+            bet_size = BET_SIZE[street]
+            if isinstance(choice, tuple):
+                if (len(choice) != 2 or choice[0] != "raise"
+                        or type(choice[1]) is not int
+                        or not BET_SIZE[street] <= choice[1] <= MAX_BET):
+                    raise ValueError(f"Sized bets must be ('raise', whole chips from {BET_SIZE[street]} to {MAX_BET})")
+                action, bet_size = choice
+            else:
+                action = choice
             if action not in legal:
                 raise ValueError(f"Illegal action {action!r}; legal actions: {legal}")
             if action == "fold":
@@ -138,7 +155,7 @@ def play_hand(policy: Policy, seed: int, style: str = "tight",
                 emit("end", result=result, winner=other, showdown=False)
                 return result
             if action == "raise":
-                amount = to_call + BET_SIZE[street]
+                amount = to_call + bet_size
                 street_paid[actor] += amount
                 paid[actor] += amount
                 pot += amount

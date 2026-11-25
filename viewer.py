@@ -37,7 +37,7 @@ def watch_hand(policy, seed: int, style: str = "tight", delay: float = 0.35) -> 
                 print(f"  AI: {HAND_NAMES[event['agent_hand'][0]]}; opponent: {HAND_NAMES[event['opponent_hand'][0]]}", flush=True)
             winner = "AI" if event["winner"] == 0 else "opponent" if event["winner"] == 1 else "tie"
             print(f"  Winner: {winner}  |  AI net: {event['result']:+d} chips", flush=True)
-        if delay:
+        if delay and kind != "turn":
             time.sleep(delay)
 
     return play_hand(policy, seed, style, on_event=show)

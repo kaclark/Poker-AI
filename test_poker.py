@@ -1,6 +1,6 @@
 import unittest
 
-from poker import best_hand, observation, play_hand, rank_five
+from poker import BET_SIZE, MAX_BET, best_hand, observation, play_hand, rank_five
 
 
 class PokerTests(unittest.TestCase):
@@ -48,6 +48,49 @@ class PokerTests(unittest.TestCase):
         self.assertEqual(len(events[0]["opponent_hole"]), 2)
         self.assertEqual(events[-1]["result"], result)
         self.assertEqual(events[-1]["kind"], "end")
+
+    def test_sized_bets_are_matched_and_keep_accounting(self):
+        events = []
+
+        def human(features, legal):
+            return ("raise", 25) if "raise" in legal else "call"
+
+        result = play_hand(lambda features, legal: "call", 13, "human",
+                           on_event=events.append, opponent_policy=human)
+        actions = [event for event in events if event["kind"] == "action"]
+        self.assertEqual([event["amount"] for event in actions if event["action"] == "bet"], [25] * 4)
+        self.assertEqual([event["amount"] for event in actions if event["action"] == "call"], [25] * 4)
+        self.assertEqual(actions[-1]["pot"], 202)
+        self.assertIn(result, (-101, 0, 101))
+        self.assertEqual(events[-1]["result"], result)
+
+    def test_fold_to_sized_bet_only_loses_ante(self):
+        events = []
+        result = play_hand(lambda features, legal: "fold" if "fold" in legal else "call",
+                           13, "human", on_event=events.append,
+                           opponent_policy=lambda features, legal: ("raise", MAX_BET))
+        self.assertEqual(result, -1)
+        self.assertFalse(events[-1]["showdown"])
+        self.assertEqual(events[-1]["winner"], 1)
+
+    def test_invalid_sized_bets_are_rejected(self):
+        for choice in (("raise", 0), ("raise", -1), ("raise", MAX_BET + 1),
+                       ("raise", 2.5), ("raise", True), ("call", 10), ("raise",)):
+            with self.subTest(choice=choice), self.assertRaises(ValueError):
+                play_hand(lambda features, legal: choice, 0)
+        with self.assertRaises(ValueError):
+            play_hand(lambda features, legal: "call", 13, "human",
+                      opponent_policy=lambda features, legal: ("raise", 2))
+
+    def test_default_bets_remain_fixed_and_turns_report_call_cost(self):
+        events = []
+        play_hand(lambda features, legal: "raise" if "raise" in legal else "call", 0,
+                  on_event=events.append, opponent_policy=lambda features, legal: "call")
+        self.assertEqual([event["amount"] for event in events if event["kind"] == "action"
+                          and event["action"] == "bet"], list(BET_SIZE))
+        calls = [event for event in events if event["kind"] == "turn" and event["actor"] == 1]
+        self.assertEqual([event["to_call"] for event in calls], list(BET_SIZE))
+        self.assertTrue(all("raise" not in event["legal"] for event in calls))
 
 
 if __name__ == "__main__":
